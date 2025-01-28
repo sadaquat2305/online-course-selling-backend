@@ -3,6 +3,8 @@ import {
     loginUser, 
  
     registerUser, 
+    refreshAccessToken,
+    logoutUser,
 
     updateUserCoverImage, 
   
@@ -16,20 +18,19 @@ import { verifyJWT } from "../middlewares/auth.middlewares.js";
 const router = Router()
 
 router.route("/register").post(
-    // upload.fields([
+    upload.none(),
 
-    //     {
-    //         name: "coverImage",
-    //         maxCount: 1
-    //     }
-    // ]),
     registerUser
     )
 
-    router.post('/login', loginUser);
+    router.post('/login', upload.none(), loginUser);
 
 //secured routes
+
+router.route("/logout").post(verifyJWT,  logoutUser)
+
 router.route("/cover-image").patch(verifyJWT, upload.single("coverImage"), updateUserCoverImage)
+router.route("/refresh-token").post(refreshAccessToken)
 
 // router.route("/c/:username").get(verifyJWT, getUserChannelProfile)
 // router.route("/history").get(verifyJWT, getWatchHistory)

@@ -4,13 +4,12 @@ import bcrypt from "bcrypt"
 
 const userSchema = new Schema(
     {
-        username: {
+        fullName: {
             type: String,
             required: true,
-            unique: true,
             lowercase: true,
             trim: true, 
-            index: true
+            
         },
         email: {
             type: String,
@@ -19,20 +18,13 @@ const userSchema = new Schema(
             lowecase: true,
             trim: true, 
         },
-        fullName: {
-            type: String,
-            required: true,
-            trim: true, 
-            index: true
-        },
-        // coverImage: {
-        //     type: String, // cloudinary url
-        // },
-
-        password: {
+         password: {
             type: String,
             required: [true, 'Password is required']
         },
+        refreshToken: {
+            type: String
+        }
 
 
     },
@@ -57,7 +49,6 @@ userSchema.methods.generateAccessToken = function(){
         {
             _id: this._id,
             email: this.email,
-            username: this.username,
             fullName: this.fullName
         },
         process.env.ACCESS_TOKEN_SECRET,
@@ -66,6 +57,7 @@ userSchema.methods.generateAccessToken = function(){
         }
     )
 }
+
 userSchema.methods.generateRefreshToken = function(){
     return jwt.sign(
         {
