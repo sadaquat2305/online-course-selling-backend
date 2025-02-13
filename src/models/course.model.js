@@ -1,26 +1,41 @@
-import mongoose, { Schema } from "mongoose";
+import mongoose, {Schema} from "mongoose";
 
-const courseSchema = new Schema(
-  {
-    title: { type: String, required: true },
-    description: { type: String, required: true },
-    price: { type: Number, required: true },
-    category: { type: String },
-    duration: { type: Number },
-    thumbnail: { type: String }, // Cloudinary URL
-    videos: [
-      {
-        videoId: { type: String, required: true },
-        title: { type: String, required: true },
-        duration: { type: Number, required: true },
-        videoUrl: { type: String, required: true }, // Cloudinary URL
-        isFreePreview: { type: Boolean, default: false },
-      },
-    ],
+
+const CourseSchema = new Schema({
+  lessons: [{
+    type: Schema.Types.ObjectId,
+    ref: 'Lesson', // Change 'Lesson' to the actual model name you use
+  }],
+  instructorId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',   // Change 'User' to the actual instructor model name
+    required: true
   },
-  {
-    timestamps: true,
+  title: {
+    type: String,
+    required: true,
+  },
+  description: {
+    type: String,
+  },
+  price: {
+    type: Schema.Types.Decimal128, // or use Number if you prefer
+    required: true,
+  },
+  thumbnailUrl: {
+    type: String,
+    required : true
+  },
+  category: {
+    type: String,
+    required: true
+  },
+  isPublished: {
+    type: Boolean,
+    default: false,
   }
-);
+}, {
+  timestamps: true // automatically adds createdAt and updatedAt
+});
 
-export const Course = mongoose.model("Course", courseSchema);
+export const Course = mongoose.model("Course", CourseSchema)

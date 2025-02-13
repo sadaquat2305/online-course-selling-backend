@@ -1,7 +1,8 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import {ApiError} from "../utils/ApiError.js"
 import { User} from "../models/user.model.js"
-import {uploadOnCloudinary} from "../utils/cloudinary.js"
+
+import { uploadOnS3} from "../utils/cloudinary.js"
 import { ApiResponse } from "../utils/ApiResponse.js";
 import jwt from "jsonwebtoken"
 import mongoose from "mongoose";
@@ -29,11 +30,15 @@ const generateAccessAndRefereshTokens = async(userId) =>{
 }
 
 const registerUser = asyncHandler(async (req, res) => {
-    const { fullName, email, password } = req.body;
+    const { name, email, password , role } = req.body;
 
     console.log("Request Body:", req.body);
 
-    if (!fullName) {
+    // const avatarLocalPath = req.file?.path;
+
+    // console.log(`Profile Photo ${avatarLocalPath}`);
+
+    if (!name) {
         throw new ApiError(400, "Full name is required");
     }
     if (!email) {
@@ -43,13 +48,36 @@ const registerUser = asyncHandler(async (req, res) => {
         throw new ApiError(400, "Password is required");
     }
 
+    if (!role) {
+        throw new ApiError(400, "Password is required");
+    }
+
     const existedUser = await User.findOne({ email });
 
     if (existedUser) {
         throw new ApiError(409, "User with email already exists");
     }
 
-    const user = await User.create({ fullName, email, password });
+    // const profilePicLocalPath = req.file?.path
+
+    // if(!profilePicLocalPath){
+
+    //     throw new ApiError(400 , "Profile Pic is missing ")
+    // }
+
+    // const fileKey = `uploads/${Date.now()}_${req.file.originalname}`;
+
+    // const result = await uploadOnS3(req.file.path , fileKey)
+
+    // if(!result){
+
+    //    throw new ApiError(500 , "Result is not found from S3")
+
+    // }
+
+    const user = await User.create({ name, email, password , role});
+
+    //, profilePicUrl : result.fileKey 
 
     if (!user) {
         throw new ApiError(500, "Something went wrong while registering the user");
@@ -62,12 +90,7 @@ const registerUser = asyncHandler(async (req, res) => {
 
 
 const loginUser = asyncHandler(async (req, res) =>{
-    // req body -> data
-    // username or email
-    //find the user
-    //password check
-    //access and referesh token
-    //send cookie
+
     const {email, password} = req.body
 
     console.log(email);
@@ -84,13 +107,18 @@ const loginUser = asyncHandler(async (req, res) =>{
     if (!user) {
         throw new ApiError(404, "User does not exist")
     }
+
+    // if(user.role != "teacher"){
+    //     throw new ApiError(404 , "User is not teacherrrrr")
+    // }
+
     console.log(password)
     console.log(user.password);
 
    const isPasswordValid = await user.isPasswordCorrect(password)
 
     if(!isPasswordValid){
-        throw new ApiError(404 , "User Credentials are not Correct")
+        throw new ApiError(404 , "User password is not correct")
     }
 
     const {accessToken , refreshToken } =  await generateAccessAndRefereshTokens(user._id)
@@ -118,6 +146,129 @@ const loginUser = asyncHandler(async (req, res) =>{
     )
 
 })
+
+const uploadProfilePic = asyncHandler(async (req , res) => {
+
+      const profilePicLocalPath = req.file?.path
+
+    if(!profilePicLocalPath){
+
+        throw new ApiError(400 , "Profile Pic is missing ")
+    }
+
+    const fileKey = `uploads/${Date.now()}_${req.file.originalname}`;
+
+    const result = await uploadOnS3(req.file.path , fileKey)
+
+    if(!result){
+
+       throw new ApiError(500 , "Result is not found from S3")
+
+    }
+
+    const user = await User.create({profilePicUrl : result.fileKey });
+
+    
+
+    if (!user) {
+        throw new ApiError(500, "Something went wrong while registering the user");
+    }
+
+    return res.status(201).json(
+        new ApiResponse(200, user, "User registered successfully")
+    );
+
+
+
+})
+
+const teacherLogin = asyncHandler(async (req, res) =>{
+    // req body -> data
+    // username or email
+    //find the user
+    //password check
+    //access and referesh token
+    //send cookie
+    const {email, password , role} = req.body
+
+    console.log(`User Role From Postman :- ${role}`) 
+
+    console.log(email);
+
+    
+    
+
+    if (!email) {
+        throw new ApiError(400, "Email is required")
+    }
+    
+ 
+    const user = await User.findOne({ email })
+
+    // First, check if user exists
+     if (!user) {
+        
+            throw new ApiError(404, "Teacher does not exist");
+        }
+
+    if(user.role != "teacher"){
+        throw new ApiError(404 , "User is not teacherrrrr")
+    }
+
+
+    console.log(`Teacher From MongoDB :- ${ user }`)
+
+    console.log(`User Role :- ${user.role}`)
+
+    if (!user) {
+        throw new ApiError(404, "Teacher does not exist")
+    }
+    console.log(password)
+    console.log(user.password);
+
+   const isPasswordValid = await user.isPasswordCorrect(password)
+
+    if(!isPasswordValid){
+        throw new ApiError(404 , "Teacher Credentials are not Correct")
+    }
+
+    const {accessToken , refreshToken } =  await generateAccessAndRefereshTokens(user._id)
+
+    const loggedInUser = await User.findById(user._id).select("-password  -refreshToken")
+
+    const options = {
+        httpOnly: true,
+        secure: true
+    }
+
+    return res
+    .status(200)
+    .cookie("accessToken" , accessToken , options)
+    .cookie("refreshToken" , refreshToken , options)
+    
+    .json(
+        new ApiResponse(
+            200, 
+            {
+                user: loggedInUser, accessToken , refreshToken
+            },
+            "Teacher logged In Successfully"
+        )
+    )
+
+})
+
+const getCurrentUser = asyncHandler(async(req, res) => {
+    return res
+    .status(200)
+    .json(new ApiResponse(
+        200,
+        req.user,
+        "User fetched successfully"
+    ))
+})
+
+
 
 const refreshAccessToken = asyncHandler(async (req, res) => {
     const incomingRefreshToken = req.cookies.refreshToken || req.body.refreshToken;
@@ -249,7 +400,9 @@ export {
     loginUser,
     refreshAccessToken,
     logoutUser,
-
+    teacherLogin,
+    uploadProfilePic,
+    getCurrentUser,
     updateUserCoverImage,
     
 }

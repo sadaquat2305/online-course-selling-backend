@@ -4,7 +4,7 @@ import bcrypt from "bcrypt"
 
 const userSchema = new Schema(
     {
-        fullName: {
+        name: {
             type: String,
             required: true,
             lowercase: true,
@@ -22,10 +22,20 @@ const userSchema = new Schema(
             type: String,
             required: [true, 'Password is required']
         },
+        role: {
+            type : String,
+            enum : ['admin' , 'instructor' , 'student' ],
+            required : true
+        },
+        bio : {
+            type : String
+        },
+        profilePicUrl : {
+            type : String
+        },
         refreshToken: {
             type: String
         }
-
 
     },
     {

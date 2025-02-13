@@ -1,6 +1,21 @@
 import { Router } from "express";
-import { registerCourse, getAllCourses, addVideoToCourse , getAllVideos , getAllCoursesByCategory } from "../controllers/course.controller.js";
+import { createCourse,
+   getAllCourses, 
+   addVideoToCourse , 
+   getAllVideos , 
+   getCoursesForStudents,
+   getAllCoursesByCategory , 
+   addLesson, 
+   getAllCoursesFromUserId, 
+   lessonUpdateByLessonId,
+   createLesson , 
+   getAllLessonsFromCourseId,
+   deleteLessonByLessonId,
+   toggleLessonLock} from "../controllers/course.controller.js";
+   
 import { upload } from "../middlewares/multer.middleware.js";
+
+import { verifyJWT } from "../middlewares/auth.middlewares.js";
 
 const router = Router();
 
@@ -12,13 +27,43 @@ router.route("/register").post(
       maxCount: 1, // Max 1 file allowed
     },
   ]),
-  registerCourse // Handle course registration, including saving the thumbnail URL
+  createCourse // Handle course registration, including saving the thumbnail URL
 );
+
+router.route("/create-course").post(verifyJWT, upload.single("thumbnail"), createCourse)
+
+router.route("/create-lesson").post(verifyJWT, upload.fields([
+
+  {
+    name: "thumbnail", // The field name for thumbnail
+    maxCount: 1, // Max 1 file allowed
+  },
+
+  {
+    name: "video", // The field name for thumbnail
+    maxCount: 1, // Max 1 file allowed
+  },
+
+]), createLesson)
+
+//router.route("all-courses").get(verifyJWT, getAllCoursesFromUserId );
+
+router.get("/all-coursess" , verifyJWT , getAllCoursesFromUserId )
+
+router.get("/all-lesson/:courseId", verifyJWT, getAllLessonsFromCourseId);
 
 // Route to get all courses
 router.get('/courses', getAllCourses);
 
 router.get('/course-category' ,getAllCoursesByCategory)
+
+router.get("/student-courses", verifyJWT , getCoursesForStudents); // Define route correctly
+
+router.patch("/:lessonId/toggle-lock", verifyJWT, toggleLessonLock);
+
+router.route("/:lessonId").patch(verifyJWT, upload.single("thumbnail"), lessonUpdateByLessonId)
+
+router.delete("/:lessonId",verifyJWT , deleteLessonByLessonId);
 
 
 // Route to add video to a specific course

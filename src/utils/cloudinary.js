@@ -1,31 +1,57 @@
-import {v2 as cloudinary} from "cloudinary"
-import fs from "fs"
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+import fs from "fs";
 
-
-cloudinary.config({ 
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME, 
-  api_key: process.env.CLOUDINARY_API_KEY, 
-  api_secret: process.env.CLOUDINARY_API_SECRET 
+// Configure AWS S3 Client (SDK v3)
+const s3 = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
 });
 
-const uploadOnCloudinary = async (localFilePath) => {
-    try {
-        if (!localFilePath) return null
-        //upload the file on cloudinary
-        const response = await cloudinary.uploader.upload(localFilePath, {
-            resource_type: "auto"
-        })
-        // file has been uploaded successfull
-        //console.log("file is uploaded on cloudinary ", response.url);
-        fs.unlinkSync(localFilePath)
-        return response;
+// Upload File to S3
+const uploadOnS3 = async (localFilePath, fileKey , contentType) => {
+  try {
+    if (!localFilePath) return null;
 
-    } catch (error) {
-        fs.unlinkSync(localFilePath) // remove the locally saved temporary file as the upload operation got failed
-        return null;
-    }
-}
+    // Read file from local path
+    const fileContent = fs.readFileSync(localFilePath);
 
+    // Upload to S3 using SDK v3
+    const params = {
+      Bucket: process.env.AWS_S3_BUCKET,
+      Key: fileKey,
+      Body: fileContent,
+      ACL: "private", // Change to "public-read" if you need public access
+      ContentType: contentType,
+    };
 
+    const command = new PutObjectCommand(params);
+    await s3.send(command);
 
-export {uploadOnCloudinary}
+    // Delete local file after upload
+    fs.unlinkSync(localFilePath);
+
+    // Generate a signed URL
+    const signedUrl = await getSignedUrl(
+      s3,
+      new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: fileKey }),
+      { expiresIn: 3600 } // URL expires in 1 hour (3600 seconds)
+    );
+
+    return {
+      success: true,
+      message: "File uploaded successfully",
+      fileKey: fileKey,
+      signedUrl: signedUrl, // Include signed URL in response
+    };
+  } catch (error) {
+    console.error("S3 Upload Error:", error);
+    if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath);
+    return null;
+  }
+};
+
+export { uploadOnS3 };
