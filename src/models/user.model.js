@@ -35,7 +35,17 @@ const userSchema = new Schema(
         },
         refreshToken: {
             type: String
-        }
+        },
+
+        purchasedCourses: [
+            {
+              courseId: { type: mongoose.Schema.Types.ObjectId, ref: "Course", required: true },
+
+              purchaseDate: { type: Date, default: Date.now },
+              
+              expiryDate: { type: Date, required: true }, // Subscription expiry date
+            }
+          ],
 
     },
     {

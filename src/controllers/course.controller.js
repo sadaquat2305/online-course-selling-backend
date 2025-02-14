@@ -111,10 +111,10 @@ const createLesson = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Order is required");
   }
 
-  // Check if user is a teacher
-  if (req.user.role !== "teacher") {
-    throw new ApiError(403, "Only teacher can create a lesson");
-  }
+  // // Check if user is a teacher
+  // if (req.user.role !== "teacher") {
+  //   throw new ApiError(403, "Only teacher can create a lesson");
+  // }
 
   // Log files object to ensure they are being uploaded correctly
   console.log("Files:", req.files);  // Logs the entire files object
@@ -293,10 +293,10 @@ const deleteLessonByLessonId = asyncHandler(async (req, res) => {
 const toggleLessonLock = asyncHandler(async (req, res) => {
   const { lessonId } = req.params;
 
-  // Check if user is a teacher (Ensure this middleware is applied before calling the controller)
-  if (!req.user || req.user.role !== "teacher") {
-    throw new ApiError(403, "Access denied: Only teachers can change lesson lock status");
-  }
+  // // Check if user is a teacher (Ensure this middleware is applied before calling the controller)
+  // if (!req.user || req.user.role !== "teacher") {
+  //   throw new ApiError(403, "Access denied: Only teachers can change lesson lock status");
+  // }
 
   if (!lessonId) {
     throw new ApiError(400, "Lesson ID is required");
@@ -322,9 +322,9 @@ const getAllCoursesFromUserId = asyncHandler(async (req, res) => {
   try {
     const instructorId = req.user._id; // ✅ Get instructor ID from the logged-in user
 
-    if (req.user.role !== "teacher") {
-      throw new ApiError(403, "Only instructors can view their courses");
-    }
+    // if (req.user.role !== "teacher") {
+    //   throw new ApiError(403, "Only instructors can view their courses");
+    // }
 
     // Fetch all courses for the instructor
     const courses = await Course.find({ instructorId });
@@ -363,73 +363,96 @@ const getAllCoursesFromUserId = asyncHandler(async (req, res) => {
 
 const getCoursesForStudents = asyncHandler(async (req, res) => {
   try {
+    // Get studentId directly from req.user (which is set by the verifyJWT middleware)
+    const studentId = req.user._id;
+
     const allowedCategories = ["BAMS FIRST PROF", "BAMS SECOND PROF", "BAMS THIRD PROF"];
 
-    // Fetch courses with only the required fields
-    const courses = await Course.find(
-      { category: { $in: allowedCategories } }, 
-      { title: 1, description: 1, thumbnailUrl: 1, isPublished: 1, createdAt: 1, updatedAt: 1, category: 1, _id: 1, price: 1 }
+    // Fetch student details
+    const student = await User.findById(studentId);
+    if (!student) {
+      return res.status(404).json(new ApiResponse(404, [], "Student not found"));
+    }
+
+    // Clean up expired courses from the student's purchasedCourses array
+    const now = new Date();
+    student.purchasedCourses = student.purchasedCourses.filter(
+      (purchase) => new Date(purchase.expiryDate) > now
     );
 
-    console.log("Fetched Courses:", courses);
+    // Save the updated student document (only if changes were made)
+    if (student.isModified("purchasedCourses")) {
+      await student.save();
+    }
+
+    // Fetch all courses in the allowed categories
+    const courses = await Course.find(
+      { category: { $in: allowedCategories } },
+      { title: 1, description: 1, thumbnailUrl: 1, isPublished: 1, createdAt: 1, updatedAt: 1, category: 1, _id: 1, price: 1 }
+    );
 
     if (!courses || courses.length === 0) {
       return res.status(404).json(new ApiResponse(404, [], "No courses found"));
     }
 
-    // Fetch lessons for each course and limit fields
     const coursesWithLessons = await Promise.all(
       courses.map(async (course) => {
+        // Check if the student has purchased this course and its access is not expired
+        const purchase = student.purchasedCourses.find(
+          (p) => p.courseId.toString() === course._id.toString()
+        );
+
+        const isPurchased = !!purchase;
+
+        // Fetch lessons: all if purchased, or all lessons if not purchased (no filtering by isFree)
         const lessons = await Lesson.find(
-          { courseId: course._id },
+          { courseId: course._id },  // Fetch all lessons regardless of isFree
           { title: 1, content: 1, isFree: 1, order: 1, videoUrl: 1, thumbnailUrl: 1, _id: 1 }
         ).sort({ order: 1 });
 
         // Generate Signed URL for Course Thumbnail
         let courseSignedUrl = null;
         if (course.thumbnailUrl) {
-          const courseCommand = new GetObjectCommand({
-            Bucket: process.env.AWS_S3_BUCKET,
-            Key: course.thumbnailUrl,
-            ResponseContentType: "image/jpeg",
-          });
-
           try {
-            courseSignedUrl = await getSignedUrl(s3, courseCommand, { expiresIn: 3600 });
+            courseSignedUrl = await getSignedUrl(
+              s3,
+              new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: course.thumbnailUrl, ResponseContentType: "image/jpeg" }),
+              { expiresIn: 3600 }
+            );
           } catch (err) {
             console.error("Error generating course signed URL:", err);
-            courseSignedUrl = null;
           }
         }
 
-        // Process Lessons
+        // Process lessons and generate signed URLs for videos and thumbnails
         const lessonsWithSignedUrls = await Promise.all(
           lessons.map(async (lesson) => {
             let videoSignedUrl = null;
             let thumbnailSignedUrl = null;
 
-            if (lesson.videoUrl) {
-              const videoCommand = new GetObjectCommand({
-                Bucket: process.env.AWS_S3_BUCKET,
-                Key: lesson.videoUrl,
-                ResponseContentType: "video/mp4",
-              });
-
-              videoSignedUrl = await getSignedUrl(s3, videoCommand, { expiresIn: 3600 });
+            // Generate signed URL for video only if accessible (either free or purchased)
+            if ((lesson.isFree || isPurchased) && lesson.videoUrl) {
+              try {
+                videoSignedUrl = await getSignedUrl(
+                  s3,
+                  new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: lesson.videoUrl, ResponseContentType: "video/mp4" }),
+                  { expiresIn: 3600 }
+                );
+              } catch (err) {
+                console.error("Error generating video signed URL:", err);
+              }
             }
 
+            // Generate signed URL for lesson thumbnail
             if (lesson.thumbnailUrl) {
-              const thumbnailCommand = new GetObjectCommand({
-                Bucket: process.env.AWS_S3_BUCKET,
-                Key: lesson.thumbnailUrl,
-                ResponseContentType: "image/jpeg",
-              });
-
               try {
-                thumbnailSignedUrl = await getSignedUrl(s3, thumbnailCommand, { expiresIn: 3600 });
+                thumbnailSignedUrl = await getSignedUrl(
+                  s3,
+                  new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: lesson.thumbnailUrl, ResponseContentType: "image/jpeg" }),
+                  { expiresIn: 3600 }
+                );
               } catch (err) {
                 console.error("Error generating lesson thumbnail signed URL:", err);
-                thumbnailSignedUrl = null;
               }
             }
 
@@ -439,7 +462,7 @@ const getCoursesForStudents = asyncHandler(async (req, res) => {
               content: lesson.content,
               isFree: lesson.isFree,
               order: lesson.order,
-              videoSignedUrl,
+              videoSignedUrl, // Will be null if not accessible
               thumbnailSignedUrl,
             };
           })
@@ -455,12 +478,11 @@ const getCoursesForStudents = asyncHandler(async (req, res) => {
           updatedAt: course.updatedAt,
           category: course.category,
           lessons: lessonsWithSignedUrls,
-          price: course.price, // Added price here
+          price: course.price,
+          isPurchased, // Indicates if the student has purchased this course
         };
       })
     );
-
-    console.log("Courses with Lessons:", coursesWithLessons);
 
     // Group courses by category
     const groupedCourses = allowedCategories.map((category) => ({
@@ -717,6 +739,53 @@ const getAllCoursesByCategory = asyncHandler(async (req, res) => {
   }
 });
 
+// Controller to handle course purchase
+const purchaseCourse = asyncHandler(async (req, res) => {
+  try {
+    const { studentId } = req.params; // Get student ID from URL params
+    const { courseId } = req.body; // Get course ID from the request body
+
+    // Fetch student details
+    const student = await User.findById(studentId);
+    if (!student) {
+      return res.status(404).json(new ApiResponse(404, [], "Student not found"));
+    }
+
+    // Fetch course details
+    const course = await Course.findById(courseId);
+    if (!course) {
+      return res.status(404).json(new ApiResponse(404, [], "Course not found"));
+    }
+
+    // Calculate expiry date (2 minutes from now)
+    const expiryDate = new Date();
+    expiryDate.setMinutes(expiryDate.getMinutes() + 2); // 2 minutes
+
+    // Check if the student has already purchased the course
+    const alreadyPurchased = student.purchasedCourses.some(
+      (purchase) => purchase.courseId.toString() === courseId
+    );
+
+    if (alreadyPurchased) {
+      return res.status(400).json(new ApiResponse(400, [], "Course already purchased"));
+    }
+
+    // Add the course to the student's purchasedCourses array
+    student.purchasedCourses.push({
+      courseId,
+      expiryDate,
+    });
+
+    // Save the updated student document
+    await student.save();
+
+    return res.status(200).json(new ApiResponse(200, [], "Course purchased successfully"));
+  } catch (error) {
+    console.error("Error in purchaseCourse:", error);
+    throw new ApiError(500, error.message || "Something went wrong while processing the course purchase");
+  }
+});
+
 
 
 export {
@@ -725,6 +794,7 @@ export {
    createLesson,
    addVideoToCourse,
    toggleLessonLock,
+   purchaseCourse,
    deleteLessonByLessonId,
    getAllCoursesFromUserId,
    lessonUpdateByLessonId,

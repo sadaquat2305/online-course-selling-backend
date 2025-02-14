@@ -5,6 +5,7 @@ import { createCourse,
    getAllVideos , 
    getCoursesForStudents,
    getAllCoursesByCategory , 
+   purchaseCourse,
    addLesson, 
    getAllCoursesFromUserId, 
    lessonUpdateByLessonId,
@@ -58,6 +59,9 @@ router.get('/courses', getAllCourses);
 router.get('/course-category' ,getAllCoursesByCategory)
 
 router.get("/student-courses", verifyJWT , getCoursesForStudents); // Define route correctly
+
+// Route to purchase course
+router.post("/purchase/:studentId", purchaseCourse);
 
 router.patch("/:lessonId/toggle-lock", verifyJWT, toggleLessonLock);
 
