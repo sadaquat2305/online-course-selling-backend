@@ -4,6 +4,12 @@ import { User} from "../models/user.model.js"
 
 import { Course } from "../models/course.model.js"
 
+import crypto from "crypto";
+
+import { Payment } from "../models/payment.model.js";
+
+import Razorpay from "razorpay";
+
 import { Lesson } from "../models/lesson.model.js"
 
 import {uploadOnS3} from "../utils/cloudinary.js"
@@ -22,6 +28,12 @@ const s3 = new S3Client({
     accessKeyId: process.env.AWS_ACCESS_KEY_ID,
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
+});
+
+// Initialize Razorpay
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID,
+  key_secret: process.env.RAZORPAY_KEY_SECRET,
 });
 
 const createCourse = asyncHandler(async (req, res) => {
@@ -48,9 +60,9 @@ const createCourse = asyncHandler(async (req, res) => {
       throw new ApiError(400, "Password is required");
   }
 
-  if(req.user.role != "teacher"){
-    throw new ApiError(400 , "Only teacher can Create Course")
-  }
+  // if(req.user.role != "teacher"){
+  //   throw new ApiError(400 , "Only teacher can Create Course")
+  // }
 
   const thumbnailLocalPath = req.file?.path
 
@@ -788,6 +800,102 @@ const purchaseCourse = asyncHandler(async (req, res) => {
 
 
 
+ const payFromRazorpay = asyncHandler(async (req, res) => {
+  try {
+    const { courseId, amount } = req.body;
+
+    // Create a Razorpay order
+    const options = {
+      amount: amount, // Amount in paise
+      currency: "INR",
+      receipt: `receipt_${courseId}`, // Unique receipt ID
+      payment_capture: 1, // Auto-capture payment
+    };
+
+    const order = await razorpay.orders.create(options);
+
+    return res.status(200).json(new ApiResponse(200, order, "Razorpay order created successfully"));
+  } catch (error) {
+    console.error("Error creating Razorpay order:", error);
+    throw new ApiError(500, error.message || "Something went wrong while creating Razorpay order");
+  }
+})
+
+const verifyPayment = asyncHandler(async (req, res) => {
+  try {
+    const { razorpay_payment_id, razorpay_order_id, razorpay_signature, courseId } = req.body;
+
+    // ✅ Get studentId from authenticated user
+    const studentId = req.user._id; // Retrieved from verifyJWT middleware
+
+    if (!mongoose.Types.ObjectId.isValid(courseId)) {
+      return res.status(400).json(new ApiResponse(400, [], "Invalid course ID"));
+    }
+
+    const courseObjectId = new mongoose.Types.ObjectId(courseId);
+
+    // ✅ Verify Razorpay payment signature
+    const hmac = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET);
+    hmac.update(`${razorpay_order_id}|${razorpay_payment_id}`);
+    const expectedSignature = hmac.digest("hex");
+
+    if (expectedSignature !== razorpay_signature) {
+      return res.status(400).json(new ApiResponse(400, [], "Invalid payment signature"));
+    }
+
+    // ✅ Fetch student details
+    const student = await User.findById(studentId);
+    if (!student) {
+      return res.status(404).json(new ApiResponse(404, [], "Student not found"));
+    }
+
+    // ✅ Fetch course details
+    const course = await Course.findById(courseObjectId);
+    if (!course) {
+      return res.status(404).json(new ApiResponse(404, [], "Course not found"));
+    }
+
+    // ✅ Check if the student already owns the course
+    const alreadyPurchased = student.purchasedCourses.some(
+      (purchase) => purchase.courseId.toString() === courseId
+    );
+
+    if (alreadyPurchased) {
+      return res.status(400).json(new ApiResponse(400, [], "Course already purchased"));
+    }
+
+    // ✅ Calculate expiry date (2 minutes from now)
+    const expiryDate = new Date();
+    expiryDate.setMinutes(expiryDate.getMinutes() + 2);
+
+    // ✅ Add course to student's purchasedCourses
+    student.purchasedCourses.push({
+      courseId,
+      expiryDate,
+    });
+
+    await student.save();
+
+    // ✅ Store payment details in the database
+    const paymentRecord = new Payment({
+      studentId,
+      courseId,
+      razorpay_payment_id,
+      razorpay_order_id,
+      amount: course.price, // Assuming course has a price field
+      status: "Success",
+    });
+
+    await paymentRecord.save();
+
+    return res.status(200).json(new ApiResponse(200, [], "Payment verified and course access granted"));
+  } catch (error) {
+    console.error("Error verifying Razorpay payment:", error);
+    throw new ApiError(500, error.message || "Something went wrong during payment verification");
+  }
+});
+
+
 export {
    createCourse,
    getAllCourses,
@@ -795,6 +903,8 @@ export {
    addVideoToCourse,
    toggleLessonLock,
    purchaseCourse,
+   verifyPayment,
+   payFromRazorpay,
    deleteLessonByLessonId,
    getAllCoursesFromUserId,
    lessonUpdateByLessonId,

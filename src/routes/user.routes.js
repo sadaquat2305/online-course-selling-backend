@@ -40,6 +40,7 @@ router.route("/upload-profile-pic").post( verifyJWT , upload.single("profilePic"
 router.route("/logout").post(verifyJWT,  logoutUser);
 
 
+
 router.route("/cover-image").patch(verifyJWT, upload.single("coverImage"), updateUserCoverImage)
 router.route("/refresh-token").post(refreshAccessToken)
 router.route("/current-user").get(verifyJWT, getCurrentUser)

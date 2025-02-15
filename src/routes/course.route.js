@@ -6,7 +6,9 @@ import { createCourse,
    getCoursesForStudents,
    getAllCoursesByCategory , 
    purchaseCourse,
+   payFromRazorpay,
    addLesson, 
+   verifyPayment,
    getAllCoursesFromUserId, 
    lessonUpdateByLessonId,
    createLesson , 
@@ -62,6 +64,10 @@ router.get("/student-courses", verifyJWT , getCoursesForStudents); // Define rou
 
 // Route to purchase course
 router.post("/purchase/:studentId", purchaseCourse);
+
+router.post("/verify-payment", verifyJWT, verifyPayment);
+
+router.post("/create-razorpay-order" ,verifyJWT, payFromRazorpay )
 
 router.patch("/:lessonId/toggle-lock", verifyJWT, toggleLessonLock);
 
