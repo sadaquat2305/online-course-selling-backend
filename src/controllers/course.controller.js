@@ -123,13 +123,8 @@ const createLesson = asyncHandler(async (req, res) => {
     throw new ApiError(400, "Order is required");
   }
 
-  // // Check if user is a teacher
-  // if (req.user.role !== "teacher") {
-  //   throw new ApiError(403, "Only teacher can create a lesson");
-  // }
-
   // Log files object to ensure they are being uploaded correctly
-  console.log("Files:", req.files);  // Logs the entire files object
+  console.log("Files:", req.files);
   console.log("Video File:", req.files.video);
   console.log("Thumbnail File:", req.files.thumbnail);
 
@@ -166,13 +161,14 @@ const createLesson = asyncHandler(async (req, res) => {
     throw new ApiError(500, "Failed to upload thumbnail to S3");
   }
 
-  // Create lesson in the database
+  // Create lesson in the database with teacherId
   const lesson = await Lesson.create({
     courseId,
+    teacherId: req.user._id, // Store user ID as teacherId
     title,
     content,
-    videoUrl: result.fileKey,  // Store the fileKey returned by the S3 upload
-    thumbnailUrl: thumbnailResult.fileKey,  // Store the thumbnail fileKey
+    videoUrl: result.fileKey, // Store the fileKey returned by the S3 upload
+    thumbnailUrl: thumbnailResult.fileKey, // Store the thumbnail fileKey
     isFree,
     order,
   });
@@ -187,6 +183,7 @@ const createLesson = asyncHandler(async (req, res) => {
     new ApiResponse(200, lesson, "Lesson created successfully")
   );
 });
+
 
 const lessonUpdateByLessonId = asyncHandler(async (req, res) => {
   const { lessonId } = req.params;
@@ -373,100 +370,236 @@ const getAllCoursesFromUserId = asyncHandler(async (req, res) => {
   }
 });
 
-const getCoursesForStudents = asyncHandler(async (req, res) => {
+const viewAllTeacherCoursesForAdmin = asyncHandler(async (req, res) => {
   try {
-    // Get studentId directly from req.user (which is set by the verifyJWT middleware)
-    const studentId = req.user._id;
+    // Fetch all teachers with their profile photo
+    const teachers = await User.find({ role: "teacher" }, { name: 1, email: 1, _id: 1, profilePicUrl: 1 });
 
-    const allowedCategories = ["BAMS FIRST PROF", "BAMS SECOND PROF", "BAMS THIRD PROF"];
+    const teachersWithCoursesAndLessons = await Promise.all(
+      teachers.map(async (teacher) => {
+        // Generate Signed URL for Teacher's Profile Photo
+        let profilePhotoSignedUrl = null;
+        if (teacher.profilePicUrl) {
+          try {
+            profilePhotoSignedUrl = await getSignedUrl(
+              s3,
+              new GetObjectCommand({
+                Bucket: process.env.AWS_S3_BUCKET,
+                Key: teacher.profilePicUrl,
+                ResponseContentType: "image/jpeg", // Adjust based on your file type
+              }),
+              { expiresIn: 3600 } // URL expires in 1 hour
+            );
+          } catch (err) {
+            console.error("Error generating profile photo signed URL:", err);
+          }
+        }
 
-    // Fetch student details
-    const student = await User.findById(studentId);
-    if (!student) {
-      return res.status(404).json(new ApiResponse(404, [], "Student not found"));
-    }
+        // Fetch all courses created by the teacher
+        const teacherCourses = await Course.find(
+          { instructorId: teacher._id },
+          { title: 1, description: 1, thumbnailUrl: 1, isPublished: 1, createdAt: 1, updatedAt: 1, category: 1, _id: 1, price: 1 }
+        );
 
-    // Clean up expired courses from the student's purchasedCourses array
-    const now = new Date();
-    student.purchasedCourses = student.purchasedCourses.filter(
-      (purchase) => new Date(purchase.expiryDate) > now
+        // Fetch lessons for each course
+        const teacherCoursesWithLessons = await Promise.all(
+          teacherCourses.map(async (course) => {
+            const lessons = await Lesson.find(
+              { courseId: course._id },
+              { title: 1, content: 1, isFree: 1, order: 1, videoUrl: 1, thumbnailUrl: 1, _id: 1 }
+            ).sort({ order: 1 });
+
+            // Generate Signed URL for Course Thumbnail
+            let courseSignedUrl = null;
+            if (course.thumbnailUrl) {
+              try {
+                courseSignedUrl = await getSignedUrl(
+                  s3,
+                  new GetObjectCommand({
+                    Bucket: process.env.AWS_S3_BUCKET,
+                    Key: course.thumbnailUrl,
+                    ResponseContentType: "image/jpeg",
+                  }),
+                  { expiresIn: 3600 }
+                );
+              } catch (err) {
+                console.error("Error generating course signed URL:", err);
+              }
+            }
+
+            // Process lessons and generate signed URLs for videos and thumbnails
+            const lessonsWithSignedUrls = await Promise.all(
+              lessons.map(async (lesson) => {
+                let videoSignedUrl = null;
+                let thumbnailSignedUrl = null;
+
+                // Generate signed URL for video
+                if (lesson.videoUrl) {
+                  try {
+                    videoSignedUrl = await getSignedUrl(
+                      s3,
+                      new GetObjectCommand({
+                        Bucket: process.env.AWS_S3_BUCKET,
+                        Key: lesson.videoUrl,
+                        ResponseContentType: "video/mp4",
+                      }),
+                      { expiresIn: 3600 }
+                    );
+                  } catch (err) {
+                    console.error("Error generating video signed URL:", err);
+                  }
+                }
+
+                // Generate signed URL for lesson thumbnail
+                if (lesson.thumbnailUrl) {
+                  try {
+                    thumbnailSignedUrl = await getSignedUrl(
+                      s3,
+                      new GetObjectCommand({
+                        Bucket: process.env.AWS_S3_BUCKET,
+                        Key: lesson.thumbnailUrl,
+                        ResponseContentType: "image/jpeg",
+                      }),
+                      { expiresIn: 3600 }
+                    );
+                  } catch (err) {
+                    console.error("Error generating lesson thumbnail signed URL:", err);
+                  }
+                }
+
+                return {
+                  _id: lesson._id,
+                  title: lesson.title,
+                  content: lesson.content,
+                  isFree: lesson.isFree,
+                  order: lesson.order,
+                  videoSignedUrl,
+                  thumbnailSignedUrl,
+                };
+              })
+            );
+
+            return {
+              ...course.toObject(),
+              courseSignedUrl,
+              lessons: lessonsWithSignedUrls,
+            };
+          })
+        );
+
+        return {
+          _id: teacher._id,
+          name: teacher.name,
+          email: teacher.email,
+          profilePhotoSignedUrl, // Include the signed URL for the teacher's profile photo
+          courses: teacherCoursesWithLessons,
+        };
+      })
     );
 
-    // Save the updated student document (only if changes were made)
-    if (student.isModified("purchasedCourses")) {
-      await student.save();
+    // Return the response with teachersWithCourses
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        { teachersWithCourses: teachersWithCoursesAndLessons },
+        "Teachers data fetched successfully"
+      )
+    );
+  } catch (error) {
+    console.error("Error in viewAllTeacherCoursesForAdmin:", error);
+    throw new ApiError(500, error.message || "Something went wrong while fetching teachers data");
+  }
+});
+
+const getCoursesForStudentsAndTeachers = asyncHandler(async (req, res) => {
+  try {
+    const studentId = req.user?._id; // Get studentId from req.user (set by verifyJWT middleware)
+    const allowedCategories = ["BAMS FIRST PROF", "BAMS SECOND PROF", "BAMS THIRD PROF"];
+
+    // Fetch student details (if studentId exists)
+    let student = null;
+    if (studentId) {
+      student = await User.findById(studentId);
+      if (!student) {
+        return res.status(404).json(new ApiResponse(404, [], "Student not found"));
+      }
+
+      // Clean up expired courses from the student's purchasedCourses array
+      const now = new Date();
+      student.purchasedCourses = student.purchasedCourses.filter(
+        (purchase) => new Date(purchase.expiryDate) > now
+      );
+
+      // Save the updated student document (only if changes were made)
+      if (student.isModified("purchasedCourses")) {
+        await student.save();
+      }
     }
 
     // Fetch all courses in the allowed categories
     const courses = await Course.find(
       { category: { $in: allowedCategories } },
-      { title: 1, description: 1, thumbnailUrl: 1, isPublished: 1, createdAt: 1, updatedAt: 1, category: 1, _id: 1, price: 1 }
+      { title: 1, description: 1, thumbnailUrl: 1, isPublished: 1, createdAt: 1, updatedAt: 1, category: 1, _id: 1, price: 1, instructorId: 1 }
     );
 
     if (!courses || courses.length === 0) {
       return res.status(404).json(new ApiResponse(404, [], "No courses found"));
     }
 
+    // Fetch all teachers
+    const teachers = await User.find({ role: "teacher" }, { name: 1, email: 1, _id: 1, profilePicUrl: 1 });
+
+    // Create a map to store signed URLs for unique resources
+    const signedUrlCache = new Map();
+
+    // Function to generate signed URLs and cache them
+    const generateSignedUrl = async (key, contentType) => {
+      if (signedUrlCache.has(key)) {
+        return signedUrlCache.get(key);
+      }
+      try {
+        const signedUrl = await getSignedUrl(
+          s3,
+          new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: key, ResponseContentType: contentType }),
+          { expiresIn: 3600 }
+        );
+        signedUrlCache.set(key, signedUrl);
+        return signedUrl;
+      } catch (err) {
+        console.error(`Error generating signed URL for ${key}:`, err);
+        return null;
+      }
+    };
+
+    // Process courses and group them by category and teacher
     const coursesWithLessons = await Promise.all(
       courses.map(async (course) => {
-        // Check if the student has purchased this course and its access is not expired
-        const purchase = student.purchasedCourses.find(
+        const isPurchased = student?.purchasedCourses.some(
           (p) => p.courseId.toString() === course._id.toString()
         );
 
-        const isPurchased = !!purchase;
-
-        // Fetch lessons: all if purchased, or all lessons if not purchased (no filtering by isFree)
+        // Fetch lessons for the course
         const lessons = await Lesson.find(
-          { courseId: course._id },  // Fetch all lessons regardless of isFree
+          { courseId: course._id },
           { title: 1, content: 1, isFree: 1, order: 1, videoUrl: 1, thumbnailUrl: 1, _id: 1 }
         ).sort({ order: 1 });
 
-        // Generate Signed URL for Course Thumbnail
-        let courseSignedUrl = null;
-        if (course.thumbnailUrl) {
-          try {
-            courseSignedUrl = await getSignedUrl(
-              s3,
-              new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: course.thumbnailUrl, ResponseContentType: "image/jpeg" }),
-              { expiresIn: 3600 }
-            );
-          } catch (err) {
-            console.error("Error generating course signed URL:", err);
-          }
-        }
+        // Generate signed URL for course thumbnail
+        const courseSignedUrl = course.thumbnailUrl
+          ? await generateSignedUrl(course.thumbnailUrl, "image/jpeg")
+          : null;
 
         // Process lessons and generate signed URLs for videos and thumbnails
         const lessonsWithSignedUrls = await Promise.all(
           lessons.map(async (lesson) => {
             let videoSignedUrl = null;
-            let thumbnailSignedUrl = null;
-
-            // Generate signed URL for video only if accessible (either free or purchased)
             if ((lesson.isFree || isPurchased) && lesson.videoUrl) {
-              try {
-                videoSignedUrl = await getSignedUrl(
-                  s3,
-                  new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: lesson.videoUrl, ResponseContentType: "video/mp4" }),
-                  { expiresIn: 3600 }
-                );
-              } catch (err) {
-                console.error("Error generating video signed URL:", err);
-              }
+              videoSignedUrl = await generateSignedUrl(lesson.videoUrl, "video/mp4");
             }
 
-            // Generate signed URL for lesson thumbnail
-            if (lesson.thumbnailUrl) {
-              try {
-                thumbnailSignedUrl = await getSignedUrl(
-                  s3,
-                  new GetObjectCommand({ Bucket: process.env.AWS_S3_BUCKET, Key: lesson.thumbnailUrl, ResponseContentType: "image/jpeg" }),
-                  { expiresIn: 3600 }
-                );
-              } catch (err) {
-                console.error("Error generating lesson thumbnail signed URL:", err);
-              }
-            }
+            const thumbnailSignedUrl = lesson.thumbnailUrl
+              ? await generateSignedUrl(lesson.thumbnailUrl, "image/jpeg")
+              : null;
 
             return {
               _id: lesson._id,
@@ -491,21 +624,54 @@ const getCoursesForStudents = asyncHandler(async (req, res) => {
           category: course.category,
           lessons: lessonsWithSignedUrls,
           price: course.price,
-          isPurchased, // Indicates if the student has purchased this course
+          isPurchased,
+          instructorId: course.instructorId,
         };
       })
     );
 
     // Group courses by category
-    const groupedCourses = allowedCategories.map((category) => ({
+    const groupedCoursesByCategory = allowedCategories.map((category) => ({
       category,
       courses: coursesWithLessons.filter((course) => course.category === category),
     }));
 
-    return res.status(200).json(new ApiResponse(200, groupedCourses, "Courses grouped by category fetched successfully"));
+    // Group courses by teacher
+    const groupedCoursesByTeacher = await Promise.all(
+      teachers.map(async (teacher) => {
+        const teacherCourses = coursesWithLessons.filter(
+          (course) => course.instructorId.toString() === teacher._id.toString()
+        );
+
+        // Generate signed URL for teacher's profile photo
+        const profilePhotoSignedUrl = teacher.profilePicUrl
+          ? await generateSignedUrl(teacher.profilePicUrl, "image/jpeg")
+          : null;
+
+        return {
+          _id: teacher._id,
+          name: teacher.name,
+          email: teacher.email,
+          profilePhotoSignedUrl, // Include the signed URL for the teacher's profile photo
+          courses: teacherCourses,
+        };
+      })
+    );
+
+    // Return the combined response
+    return res.status(200).json(
+      new ApiResponse(
+        200,
+        {
+          groupedCoursesByCategory,
+          groupedCoursesByTeacher,
+        },
+        "Courses and teachers data fetched successfully"
+      )
+    );
   } catch (error) {
-    console.error("Error in getCoursesForStudents:", error);
-    throw new ApiError(500, error.message || "Something went wrong while fetching courses");
+    console.error("Error in getCoursesForStudentsAndTeachers:", error);
+    throw new ApiError(500, error.message || "Something went wrong while fetching data");
   }
 });
 
@@ -587,7 +753,6 @@ const addLesson = asyncHandler(async (req, res) => {
 
     // Check if the course exists
     const course = await Course.findById(courseId);
-
     if (!course) {
       throw new ApiError(404, "Course not found");
     }
@@ -612,14 +777,14 @@ const addLesson = asyncHandler(async (req, res) => {
 
     // Upload file to S3
     const result = await uploadOnS3(req.file.path, fileKey);
-
     if (!result || !result.fileKey) {
       throw new ApiError(500, "Failed to upload lesson file to S3");
     }
 
-    // Create lesson
+    // Create lesson with teacherId
     const lesson = new Lesson({
       courseId,
+      teacherId: req.user._id, // Store user ID as teacherId
       title,
       content,
       videoUrl: result.fileKey, // Ensure `uploadOnS3` returns `fileKey`
@@ -634,6 +799,7 @@ const addLesson = asyncHandler(async (req, res) => {
     throw new ApiError(500, error.message || "Something went wrong while creating the lesson");
   }
 });
+
 
 
 const getAllCourses = asyncHandler( async (req, res) => {
@@ -821,6 +987,27 @@ const purchaseCourse = asyncHandler(async (req, res) => {
   }
 })
 
+const recentLessonByTeacher = asyncHandler(async (req, res) => {
+  try {
+    const teacherId = req.params.teacherId;
+
+    // Fetch last 5 lessons by creation date
+    const lessons = await Lesson.find({ teacherId })
+      .sort({ createdAt: -1 })
+      .limit(5);
+
+    if (!lessons.length) {
+      return res.status(404).json({ message: "No recent lessons found" });
+    }
+
+    res.status(200).json(lessons);
+  } catch (error) {
+    console.error("Error fetching recent lessons:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+
 const verifyPayment = asyncHandler(async (req, res) => {
   try {
     const { razorpay_payment_id, razorpay_order_id, razorpay_signature, courseId } = req.body;
@@ -906,10 +1093,12 @@ export {
    verifyPayment,
    payFromRazorpay,
    deleteLessonByLessonId,
+   viewAllTeacherCoursesForAdmin,
    getAllCoursesFromUserId,
    lessonUpdateByLessonId,
    getAllLessonsFromCourseId,
-   getCoursesForStudents,
+   recentLessonByTeacher,
+   getCoursesForStudentsAndTeachers,
    addLesson,
    getAllVideos,
    getAllCoursesByCategory

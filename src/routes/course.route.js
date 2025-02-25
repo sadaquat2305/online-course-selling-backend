@@ -3,10 +3,12 @@ import { createCourse,
    getAllCourses, 
    addVideoToCourse , 
    getAllVideos , 
-   getCoursesForStudents,
+   recentLessonByTeacher,
+   getCoursesForStudentsAndTeachers,
    getAllCoursesByCategory , 
    purchaseCourse,
    payFromRazorpay,
+   viewAllTeacherCoursesForAdmin,
    addLesson, 
    verifyPayment,
    getAllCoursesFromUserId, 
@@ -53,14 +55,18 @@ router.route("/create-lesson").post(verifyJWT, upload.fields([
 
 router.get("/all-coursess" , verifyJWT , getAllCoursesFromUserId )
 
+router.get("/all-courses-for-admin", viewAllTeacherCoursesForAdmin)
+
 router.get("/all-lesson/:courseId", verifyJWT, getAllLessonsFromCourseId);
+
+router.get("/recent/:teacherId" , verifyJWT  , recentLessonByTeacher )
 
 // Route to get all courses
 router.get('/courses', getAllCourses);
 
 router.get('/course-category' ,getAllCoursesByCategory)
 
-router.get("/student-courses", verifyJWT , getCoursesForStudents); // Define route correctly
+router.get("/student-courses", verifyJWT , getCoursesForStudentsAndTeachers); // Define route correctly
 
 // Route to purchase course
 router.post("/purchase/:studentId", purchaseCourse);

@@ -7,6 +7,12 @@ const LessonSchema = new Schema({
     ref: 'Course', // Make sure 'Course' matches the model name you used
     required: true,
   },
+  teacherId: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    required: true,
+     ref: "User" 
+    
+    }, // Add teacherId field
   title: {
     type: String,
     required: true,

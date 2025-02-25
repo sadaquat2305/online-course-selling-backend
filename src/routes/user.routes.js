@@ -3,6 +3,8 @@ import {
     loginUser, 
     teacherLogin,
     uploadProfilePic,
+    adminLogin,
+    createTeacher,
  
     registerUser, 
     refreshAccessToken,
@@ -25,10 +27,21 @@ router.route("/register").post(
     registerUser
     )
 
+
+
+
 //     router.post('/login', upload.none(), loginUser);
+
+
 router.route("/login").post(upload.none() , loginUser)
 
+router.route("/create-teacher").post(
+    upload.single('profilePhoto'), // Ensure this matches the field name used in Flutter
+    createTeacher
+);
+
 router.route("/teacher-login").post(upload.none(), teacherLogin)
+router.route('/admin-login').post(upload.none() , adminLogin)
 // router.post('/teacher-login' , upload.none(),teacherLogin )
 
 // router.post("/upload-profile-pic", upload.single("profilePic"), uploadProfilePic )
